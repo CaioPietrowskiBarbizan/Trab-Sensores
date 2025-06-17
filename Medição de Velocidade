@@ -1,0 +1,89 @@
+#include <Arduino.h>
+
+// Configurações dos sensores
+const int SENSOR_ENTRADA = 2;  // Pino D2 (início dos 20 cm)
+const int SENSOR_SAIDA = 3;    // Pino D3 (fim dos 20 cm)
+const float DISTANCIA_METROS = 0.20;  // 20 cm em metros
+
+// Recordes
+struct Recorde {
+  int id;
+  float velocidade_kmh;
+};
+
+Recorde recordes[10];    // Top 10 velocidades
+int totalCarrinhos = 0;
+int carrinhoAtualID = 0;
+unsigned long tempoEntrada = 0;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(SENSOR_ENTRADA, INPUT);
+  pinMode(SENSOR_SAIDA, INPUT);
+  Serial.println("Sistema de Medição de Velocidade");
+}
+
+void loop() {
+  // Detecção na ENTRADA
+  if (digitalRead(SENSOR_ENTRADA) == LOW) {
+    tempoEntrada = micros();
+    carrinhoAtualID++;
+    Serial.print("Medindo carrinho #");
+    Serial.println(carrinhoAtualID);
+    delay(50);
+  }
+
+  // Detecção na SAÍDA
+  if (digitalRead(SENSOR_SAIDA) == LOW && tempoEntrada > 0) {
+    unsigned long tempoSaida = micros();
+    float tempoSegundos = (tempoSaida - tempoEntrada) / 1000000.0;
+    float velocidade_kmh = (DISTANCIA_METROS / tempoSegundos) * 3.6;  
+    
+    atualizarRecordes(carrinhoAtualID, velocidade_kmh);
+    tempoEntrada = 0;
+    delay(50);
+  }
+}
+
+// Atualiza o ranking
+void atualizarRecordes(int id, float velocidade_kmh) {
+  // Se o ranking não está cheio ou a velocidade é maior que o último
+  if (totalCarrinhos < 10 || velocidade_kmh > recordes[9].velocidade_kmh) {
+    if (totalCarrinhos < 10) totalCarrinhos++;
+    
+    recordes[totalCarrinhos-1] = {id, velocidade_kmh};
+    ordenarRecordes();
+    exibirRanking();
+  }
+}
+
+// Ordena do mais rápido para o mais lento
+void ordenarRecordes() {
+  for (int i = 0; i < totalCarrinhos-1; i++) {
+    for (int j = i+1; j < totalCarrinhos; j++) {
+      if (recordes[i].velocidade_kmh < recordes[j].velocidade_kmh) {
+        Recorde temp = recordes[i];
+        recordes[i] = recordes[j];
+        recordes[j] = temp;
+      }
+    }
+  }
+}
+
+// Exibe o ranking formatado
+void exibirRanking() {
+  Serial.println("\n=== TOP 10 CARRINHOS ===");
+  Serial.println("Pos | ID   | Velocidade");
+  Serial.println("-----------------------");
+  
+  for (int i = 0; i < totalCarrinhos; i++) {
+    Serial.print("#");
+    Serial.print(i+1);
+    Serial.print("  | ");
+    Serial.print(recordes[i].id);
+    Serial.print("    | ");
+    Serial.print(recordes[i].velocidade_kmh, 1);
+    Serial.println(" km/h");
+  }
+  Serial.println("=======================\n");
+}
