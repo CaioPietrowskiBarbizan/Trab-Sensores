@@ -35,7 +35,7 @@ void exibirRanking();
 
 
 void setup() {
-  Serial.begin(9999); // Inicia a comunicação serial para exibir os resultados.
+  Serial.begin(9600); // Inicia a comunicação serial para exibir os resultados.
   
   // Configura os pinos dos sensores como INPUT (entrada de sinal).
   pinMode(SENSOR_ENTRADA, INPUT);
