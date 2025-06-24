@@ -1,67 +1,177 @@
 #include <Arduino.h>
 
-// Configurações dos sensores
-const int SENSOR_ENTRADA = 2;  // Pino D2 (início dos 20 cm)
-const int SENSOR_SAIDA = 3;    // Pino D3 (fim dos 20 cm)
-const float DISTANCIA_METROS = 0.20;  // 20 cm em metros
+// --- Configurações dos Sensores e da Pista ---
+const int SENSOR_ENTRADA = 2;   // Pino digital onde o sensor de entrada está conectado
+const int SENSOR_SAIDA = 3;     // Pino digital onde o sensor de saída está conectado
 
-// Recordes
+// Distância entre os dois sensores em centímetros.
+const float DISTANCIA_CM = 15.0; 
+
+// Estado do pino digital do sensor quando um objeto (carrinho) é detectado.
+const int ESTADO_DETECTADO = LOW; 
+
+// --- Variáveis de Medição e Controle de Fluxo ---
+unsigned long tempoEntrada = 0; // Armazena o tempo em microssegundos da detecção no sensor de entrada
+
+// Flags booleanas para controlar a sequência da medição de um único carrinho por vez.
+bool aguardandoEntrada = true;  // Verdadeiro quando o sistema espera o carrinho no sensor de entrada.
+bool aguardandoSaida = false;   // Verdadeiro quando o sensor de entrada foi acionado e espera o sensor de saída.
+
+// --- Estrutura e Variáveis para o Ranking de Recordes ---
 struct Recorde {
-  int id;
-  float velocidade_kmh;
+  int id;              // ID único do carrinho.
+  float velocidade_cms; // Velocidade registrada em centímetros por segundo (cm/s).
 };
 
-Recorde recordes[10];    // Top 10 velocidades
-int totalCarrinhos = 0;
-int carrinhoAtualID = 0;
-unsigned long tempoEntrada = 0;
+Recorde recordes[10];     // Array para armazenar os 10 melhores recordes.
+int totalRecordes = 0;    // Contador do número de recordes válidos no array.
+int proximoIDCarrinho = 1; // Atribui um ID sequencial a cada carrinho medido.
+
+// --- Protótipos de Funções ---
+// Funções auxiliares para o gerenciamento do ranking.
+void atualizarRecordes(int id, float velocidade_cms);
+void ordenarRecordes();
+void exibirRanking();
+
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(9999); // Inicia a comunicação serial para exibir os resultados.
+  
+  // Configura os pinos dos sensores como INPUT (entrada de sinal).
   pinMode(SENSOR_ENTRADA, INPUT);
   pinMode(SENSOR_SAIDA, INPUT);
-  Serial.println("Sistema de Medição de Velocidade");
+  
+  // Mensagens de inicialização no Monitor Serial.
+  Serial.println("-------------------------------------");
+  Serial.println(" Medidor de Velocidade Hot Wheels ");
+  Serial.println("-------------------------------------");
+  Serial.print("Distancia entre sensores: ");
+  Serial.print(DISTANCIA_CM);
+  Serial.println(" cm");
+  Serial.println("Aguardando passagem do carrinho...");
+
+  // Inicializa o array de recordes para garantir que não contenha "lixo" da memória.
+  for (int i = 0; i < 10; i++) {
+    recordes[i] = {0, 0.0};
+  }
 }
+
 
 void loop() {
-  // Detecção na ENTRADA
-  if (digitalRead(SENSOR_ENTRADA) == LOW) {
-    tempoEntrada = micros();
-    carrinhoAtualID++;
+  // Lógica para detectar o carrinho passando pelo SENSOR DE ENTRADA.
+  // Só age se estiver aguardando o primeiro sensor E o sensor detectar o carrinho.
+  if (aguardandoEntrada && digitalRead(SENSOR_ENTRADA) == ESTADO_DETECTADO) {
+    tempoEntrada = micros();      // Registra o tempo exato em microssegundos.
+    
     Serial.print("Medindo carrinho #");
-    Serial.println(carrinhoAtualID);
-    delay(50);
+    Serial.println(proximoIDCarrinho); // Informa qual carrinho está sendo medido.
+
+    aguardandoEntrada = false;    // Passa para o próximo estado: aguardar o sensor de saída.
+    aguardandoSaida = true;       
+    
+    // Pequeno atraso para evitar leituras múltiplas ou ruído do sensor na mesma passagem.
+    delay(50); 
   }
 
-  // Detecção na SAÍDA
-  if (digitalRead(SENSOR_SAIDA) == LOW && tempoEntrada > 0) {
-    unsigned long tempoSaida = micros();
-    float tempoSegundos = (tempoSaida - tempoEntrada) / 1000000.0;
-    float velocidade_kmh = (DISTANCIA_METROS / tempoSegundos) * 3.6;  
+  // Lógica para detectar o carrinho passando pelo SENSOR DE SAÍDA.
+  // Só age se estiver aguardando o sensor de saída E o sensor detectar o carrinho.
+  if (aguardandoSaida && digitalRead(SENSOR_SAIDA) == ESTADO_DETECTADO) {
+    unsigned long tempoSaida = micros(); // Registra o tempo exato em microssegundos.
     
-    atualizarRecordes(carrinhoAtualID, velocidade_kmh);
-    tempoEntrada = 0;
-    delay(50);
+    // Calcula o tempo total que o carrinho levou para percorrer a distância entre os sensores.
+    unsigned long tempoPercorrido_us = tempoSaida - tempoEntrada;
+
+    if (tempoPercorrido_us > 0) { // Garante que o tempo medido seja válido (maior que zero).
+      float tempoSegundos = (float)tempoPercorrido_us / 1000000.0; // Converte microssegundos para segundos.
+      float velocidade_cms = DISTANCIA_CM / tempoSegundos;       // Calcula a velocidade em cm/s.
+      
+      Serial.println("Carrinho no SENSOR DE SAIDA!");
+      Serial.print("Tempo percorrido: ");
+      Serial.print(tempoPercorrido_us);
+      Serial.println(" microssegundos");
+      Serial.print("Velocidade: ");
+      Serial.print(velocidade_cms, 2); // Exibe a velocidade com 2 casas decimais.
+      Serial.println(" cm/s");
+
+      // Atualiza o ranking com os dados do carrinho que acabou de passar.
+      atualizarRecordes(proximoIDCarrinho, velocidade_cms);
+
+    } else {
+        // Mensagem de erro se o tempo medido for inválido (carrinho muito rápido ou falha de leitura).
+        Serial.println("Erro de leitura.");
+    }
+    
+    // --- Reinicia o sistema para a próxima medição ---
+    tempoEntrada = 0;          // Zera o tempo de entrada para uma nova medição.
+    aguardandoEntrada = true;  // Volta ao estado de espera pelo próximo carrinho no sensor de entrada.
+    aguardandoSaida = false;   // Desativa a espera pelo sensor de saída.
+    proximoIDCarrinho++;       // Incrementa o ID para o próximo carrinho que passar.
+    
+    // Pequeno atraso após a medição completa para evitar detecção dupla do sensor de saída.
+    delay(50); 
   }
 }
 
-// Atualiza o ranking
-void atualizarRecordes(int id, float velocidade_kmh) {
-  // Se o ranking não está cheio ou a velocidade é maior que o último
-  if (totalCarrinhos < 10 || velocidade_kmh > recordes[9].velocidade_kmh) {
-    if (totalCarrinhos < 10) totalCarrinhos++;
-    
-    recordes[totalCarrinhos-1] = {id, velocidade_kmh};
-    ordenarRecordes();
-    exibirRanking();
+// --- Funções de Gerenciamento do Ranking ---
+
+// Atualiza o ranking de recordes com a velocidade do carrinho atual.
+void atualizarRecordes(int id, float velocidade_cms) { 
+  int posInserir = totalRecordes; // Assume que o novo recorde será o último, inicialmente.
+  
+  // Encontra a posição correta no ranking onde a nova velocidade se encaixa (do mais rápido para o mais lento).
+  for (int i = 0; i < totalRecordes; i++) {
+    if (velocidade_cms > recordes[i].velocidade_cms) { 
+      posInserir = i; // Encontrou uma posição melhor.
+      break; 
+    }
+  }
+
+  // Verifica se o carrinho não entrou no top 10 (se o ranking está cheio e a velocidade não é melhor que a última).
+  if (posInserir >= 10 && totalRecordes == 10) {
+    Serial.println("Nao foi um novo recorde.");
+    return;
+  }
+
+  // Desloca os recordes existentes para abrir espaço para o novo recorde na posição encontrada.
+  for (int i = (totalRecordes < 10 ? totalRecordes : 9); i > posInserir; i--) {
+    recordes[i] = recordes[i-1];
+  }
+
+  // Insere o novo recorde no array.
+  recordes[posInserir] = {id, velocidade_cms};
+
+  // Atualiza a contagem total de recordes válidos (limitado a 10).
+  if (totalRecordes < 10) {
+    totalRecordes++;
+  }
+  
+  ordenarRecordes(); // Garante que o ranking esteja sempre ordenado.
+  exibirRanking();   // Exibe o ranking atualizado no Monitor Serial.
+
+  // Informa a posição que o carrinho alcançou no ranking e se ele bateu o recorde principal.
+  if (posInserir == 0) { // Se o carrinho alcançou a primeira posição (índice 0).
+    Serial.println("\n*** NOVO RECORDE ATINGIDO! ***");
+    Serial.print("O carrinho #");
+    Serial.print(id);
+    Serial.print(" e o mais rapido com ");
+    Serial.print(velocidade_cms, 1); 
+    Serial.println(" cm/s!\n");
+  } else if (posInserir < totalRecordes) { // Se o carrinho entrou no ranking (mas não em 1º lugar).
+    Serial.print("Carrinho #");
+    Serial.print(id);
+    Serial.print(" ficou na ");
+    Serial.print(posInserir + 1); // +1 para exibir a posição baseada em 1 (ex: 2a posicao em vez de indice 1).
+    Serial.println("a posicao no ranking.\n");
   }
 }
 
-// Ordena do mais rápido para o mais lento
+// Ordena o array de recordes do mais rápido para o mais lento (velocidade decrescente).
+// Utiliza o algoritmo Bubble Sort.
 void ordenarRecordes() {
-  for (int i = 0; i < totalCarrinhos-1; i++) {
-    for (int j = i+1; j < totalCarrinhos; j++) {
-      if (recordes[i].velocidade_kmh < recordes[j].velocidade_kmh) {
+  for (int i = 0; i < totalRecordes - 1; i++) {
+    for (int j = i + 1; j < totalRecordes; j++) {
+      if (recordes[i].velocidade_cms < recordes[j].velocidade_cms) {
+        // Troca os recordes de posição se a ordem não estiver correta.
         Recorde temp = recordes[i];
         recordes[i] = recordes[j];
         recordes[j] = temp;
@@ -70,20 +180,21 @@ void ordenarRecordes() {
   }
 }
 
-// Exibe o ranking formatado
+// Exibe o ranking formatado no Monitor Serial.
 void exibirRanking() {
   Serial.println("\n=== TOP 10 CARRINHOS ===");
-  Serial.println("Pos | ID   | Velocidade");
+  Serial.println("Pos | ID    | Velocidade");
   Serial.println("-----------------------");
   
-  for (int i = 0; i < totalCarrinhos; i++) {
+  // Percorre e exibe apenas os recordes que são válidos e foram preenchidos.
+  for (int i = 0; i < totalRecordes; i++) {
     Serial.print("#");
     Serial.print(i+1);
     Serial.print("  | ");
     Serial.print(recordes[i].id);
     Serial.print("    | ");
-    Serial.print(recordes[i].velocidade_kmh, 1);
-    Serial.println(" km/h");
+    Serial.print(recordes[i].velocidade_cms, 1); 
+    Serial.println(" cm/s"); 
   }
   Serial.println("=======================\n");
 }
